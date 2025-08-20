@@ -6,12 +6,13 @@ Provides functions for URL validation, content extraction, and
 file management during the download process.
 
 Weekly Highlights Mode:
-Fetches top content from multiple platforms (Reddit, X/Twitter, YouTube)
-for weekly highlight compilation.
+Fetches top content from Reddit and YouTube for automated weekly highlight compilation.
+X/Twitter content requires manual video URL input.
 """
 
 import os
 import logging
+import subprocess
 from typing import List, Dict, Optional, Any
 from datetime import datetime, timedelta
 
@@ -29,13 +30,6 @@ REDDIT_CLIENT_ID = os.getenv('REDDIT_CLIENT_ID', '')  # Add your client ID here
 REDDIT_CLIENT_SECRET = os.getenv('REDDIT_CLIENT_SECRET', '')  # Add your client secret here
 REDDIT_USER_AGENT = os.getenv('REDDIT_USER_AGENT', 'TikTokClipAutomator/1.0')  # Your app name
 
-# X/Twitter API Configuration
-# Get credentials from: https://developer.twitter.com/en/portal/dashboard
-TWITTER_API_KEY = os.getenv('TWITTER_API_KEY', '')  # Add your API key here
-TWITTER_API_SECRET = os.getenv('TWITTER_API_SECRET', '')  # Add your API secret here
-TWITTER_ACCESS_TOKEN = os.getenv('TWITTER_ACCESS_TOKEN', '')  # Add your access token here
-TWITTER_ACCESS_TOKEN_SECRET = os.getenv('TWITTER_ACCESS_TOKEN_SECRET', '')  # Add your access token secret here
-
 # YouTube API Configuration
 # Get credentials from: https://console.developers.google.com/
 YOUTUBE_API_KEY = os.getenv('YOUTUBE_API_KEY', '')  # Add your API key here
@@ -45,236 +39,197 @@ YOUTUBE_API_KEY = os.getenv('YOUTUBE_API_KEY', '')  # Add your API key here
 # INSTAGRAM_API_KEY = os.getenv('INSTAGRAM_API_KEY', '')  # Future implementation
 
 # =============================================================================
-# WEEKLY HIGHLIGHTS FETCHER
+# MANUAL X/TWITTER VIDEO DOWNLOADER
+# =============================================================================
+
+def fetch_manual_x_clips(tweet_urls: List[str], output_dir: str = 'downloads') -> Dict[str, Any]:
+    """
+    Downloads video clips from manually provided X/Twitter URLs using yt-dlp.
+    
+    Note: X/Twitter content is now manual-only. Users must provide specific tweet URLs
+    containing videos. Automated fetching of X/Twitter content has been disabled.
+    
+    Args:
+        tweet_urls (List[str]): List of X/Twitter URLs containing videos
+        output_dir (str): Directory to save downloaded videos
+        
+    Returns:
+        Dict[str, Any]: Results containing successful downloads and errors
+    """
+    results = {
+        'successful_downloads': [],
+        'failed_downloads': [],
+        'errors': []
+    }
+    
+    # Ensure output directory exists
+    os.makedirs(output_dir, exist_ok=True)
+    
+    for url in tweet_urls:
+        try:
+            logger.info(f"Attempting to download video from X/Twitter URL: {url}")
+            
+            # Use yt-dlp to download the video
+            cmd = [
+                'yt-dlp',
+                '--extract-flat', 'false',
+                '--write-info-json',
+                '--write-thumbnail',
+                '--output', f'{output_dir}/%(uploader)s_%(title)s_%(id)s.%(ext)s',
+                url
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            
+            results['successful_downloads'].append({
+                'url': url,
+                'status': 'success',
+                'output_dir': output_dir
+            })
+            
+            logger.info(f"Successfully downloaded video from: {url}")
+            
+        except subprocess.CalledProcessError as e:
+            error_msg = f"Failed to download from {url}: {e.stderr}"
+            logger.error(error_msg)
+            results['failed_downloads'].append(url)
+            results['errors'].append(error_msg)
+            
+        except Exception as e:
+            error_msg = f"Unexpected error downloading from {url}: {str(e)}"
+            logger.error(error_msg)
+            results['failed_downloads'].append(url)
+            results['errors'].append(error_msg)
+    
+    return results
+
+# =============================================================================
+# WEEKLY HIGHLIGHTS FETCHER (AUTOMATED REDDIT & YOUTUBE ONLY)
 # =============================================================================
 
 class WeeklyHighlightsFetcher:
     """
-    Fetches top content from multiple social media platforms for weekly highlights.
+    Fetches top content from Reddit and YouTube for automated weekly highlights.
     
-    This class provides methods to retrieve trending/popular content from various
-    platforms within a specified time frame, typically the past week.
+    Note: X/Twitter content is no longer automatically fetched. Use fetch_manual_x_clips()
+    function for manual X/Twitter video downloading with user-provided URLs.
+    
+    Automated platforms:
+    - Reddit: Fetches top posts from specified subreddits
+    - YouTube: Fetches trending videos based on search terms
+    
+    Manual platforms:
+    - X/Twitter: Requires manual URL input via fetch_manual_x_clips() function
     """
     
-    def __init__(self, time_window_days: int = 7):
+    def __init__(self):
+        """Initialize the WeeklyHighlightsFetcher."""
+        self.reddit_client = None
+        self.youtube_client = None
+        # Note: Twitter client removed - now manual only
+        
+    def validate_api_credentials(self) -> Dict[str, bool]:
         """
-        Initialize the Weekly Highlights Fetcher.
+        Validate API credentials for automated platforms only (Reddit and YouTube).
         
-        Args:
-            time_window_days (int): Number of days to look back for content (default: 7)
+        Returns:
+            Dict[str, bool]: Status of each platform's API credentials
         """
-        self.time_window_days = time_window_days
-        self.start_date = datetime.now() - timedelta(days=time_window_days)
-        
-        # Initialize API clients here
-        # TODO: Initialize Reddit client (praw)
-        # TODO: Initialize Twitter client (tweepy)
-        # TODO: Initialize YouTube client (google-api-python-client)
-        
-        logger.info(f"Initialized WeeklyHighlightsFetcher with {time_window_days}-day window")
+        credentials = {
+            'reddit': bool(REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET),
+            'youtube': bool(YOUTUBE_API_KEY)
+            # Note: Twitter credentials no longer checked for automated fetching
+        }
+        return credentials
     
-    def fetch_top_reddit_clips(self, subreddit_names: List[str], limit: int = 10) -> List[Dict[str, Any]]:
+    def fetch_reddit_highlights(self, config: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
-        Fetch top video posts from specified Reddit subreddits within the time window.
+        Fetch top posts from Reddit subreddits.
         
         Args:
-            subreddit_names (List[str]): List of subreddit names to fetch from
-            limit (int): Maximum number of posts to fetch per subreddit
+            config (Dict[str, Any]): Reddit configuration with subreddits and limit
             
         Returns:
-            List[Dict[str, Any]]: List of video post data including URLs, titles, scores
-            
-        Example:
-            >>> fetcher = WeeklyHighlightsFetcher()
-            >>> clips = fetcher.fetch_top_reddit_clips(['funny', 'videos'], limit=5)
+            List[Dict[str, Any]]: List of Reddit posts
         """
-        logger.info(f"Fetching top Reddit clips from {len(subreddit_names)} subreddits")
-        
         # TODO: Implement Reddit API integration
-        # 1. Initialize praw.Reddit client with credentials above
-        # 2. For each subreddit in subreddit_names:
-        #    - Get top posts from the past week
-        #    - Filter for video content (reddit videos, youtube links, etc.)
-        #    - Extract post data (title, url, score, comments, author)
-        # 3. Sort by score/engagement
-        # 4. Return structured data
-        
-        # Placeholder return
+        logger.info(f"TODO: Fetch Reddit highlights with config: {config}")
         return []
     
-    def fetch_top_x_clips(self, hashtags: List[str] = None, limit: int = 10) -> List[Dict[str, Any]]:
+    def fetch_youtube_highlights(self, config: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
-        Fetch top video tweets from X/Twitter within the time window.
+        Fetch trending videos from YouTube.
         
         Args:
-            hashtags (List[str], optional): List of hashtags to search for
-            limit (int): Maximum number of tweets to fetch
+            config (Dict[str, Any]): YouTube configuration with search terms and limit
             
         Returns:
-            List[Dict[str, Any]]: List of tweet data including URLs, content, metrics
-            
-        Example:
-            >>> fetcher = WeeklyHighlightsFetcher()
-            >>> clips = fetcher.fetch_top_x_clips(['#viral', '#funny'], limit=5)
+            List[Dict[str, Any]]: List of YouTube videos
         """
-        logger.info(f"Fetching top X/Twitter clips with hashtags: {hashtags}")
-        
-        # TODO: Implement Twitter API integration
-        # 1. Initialize tweepy client with credentials above
-        # 2. Search for tweets with video content:
-        #    - Use Twitter API v2 search with media filters
-        #    - Filter by date range (past week)
-        #    - Include hashtags if specified
-        # 3. Extract tweet data (text, media_urls, metrics, author)
-        # 4. Sort by engagement (retweets, likes, views)
-        # 5. Return structured data
-        
-        # Placeholder return
-        return []
-    
-    def fetch_top_youtube_clips(self, search_terms: List[str] = None, limit: int = 10) -> List[Dict[str, Any]]:
-        """
-        Fetch top YouTube videos within the time window.
-        
-        Args:
-            search_terms (List[str], optional): List of search terms/keywords
-            limit (int): Maximum number of videos to fetch
-            
-        Returns:
-            List[Dict[str, Any]]: List of video data including URLs, titles, metrics
-            
-        Example:
-            >>> fetcher = WeeklyHighlightsFetcher()
-            >>> clips = fetcher.fetch_top_youtube_clips(['viral video', 'trending'], limit=5)
-        """
-        logger.info(f"Fetching top YouTube clips with search terms: {search_terms}")
-        
         # TODO: Implement YouTube API integration
-        # 1. Initialize YouTube API client with credentials above
-        # 2. Search for videos:
-        #    - Use youtube.search().list() with video filter
-        #    - Filter by publish date (past week)
-        #    - Include search terms if specified
-        #    - Order by relevance or view count
-        # 3. Extract video data (title, url, view_count, like_count, channel)
-        # 4. Get additional statistics if needed
-        # 5. Return structured data
-        
-        # Placeholder return
+        logger.info(f"TODO: Fetch YouTube highlights with config: {config}")
         return []
     
     def fetch_all_highlights(self, config: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
         """
-        Fetch highlights from all configured platforms.
+        Fetch highlights from all automated platforms (Reddit and YouTube only).
+        
+        Note: X/Twitter content must be manually downloaded using fetch_manual_x_clips()
         
         Args:
-            config (Dict[str, Any]): Configuration dictionary containing:
-                - reddit: {'subreddits': List[str], 'limit': int}
-                - twitter: {'hashtags': List[str], 'limit': int}
-                - youtube: {'search_terms': List[str], 'limit': int}
-                
+            config (Dict[str, Any]): Configuration for all platforms
+            
         Returns:
-            Dict[str, List[Dict[str, Any]]]: Dictionary with platform names as keys
-            and lists of content data as values
-            
-        Example:
-            >>> config = {
-            ...     'reddit': {'subreddits': ['funny', 'videos'], 'limit': 5},
-            ...     'twitter': {'hashtags': ['#viral'], 'limit': 5},
-            ...     'youtube': {'search_terms': ['trending'], 'limit': 5}
-            ... }
-            >>> fetcher = WeeklyHighlightsFetcher()
-            >>> all_clips = fetcher.fetch_all_highlights(config)
+            Dict[str, List[Dict[str, Any]]]: Highlights organized by platform
         """
-        logger.info("Fetching highlights from all configured platforms")
+        highlights = {}
         
-        results = {
-            'reddit': [],
-            'twitter': [],
-            'youtube': []
-        }
+        # Fetch automated content only
+        if 'reddit' in config:
+            highlights['reddit'] = self.fetch_reddit_highlights(config['reddit'])
+            
+        if 'youtube' in config:
+            highlights['youtube'] = self.fetch_youtube_highlights(config['youtube'])
         
-        try:
-            # Fetch Reddit content
-            if 'reddit' in config:
-                reddit_config = config['reddit']
-                results['reddit'] = self.fetch_top_reddit_clips(
-                    subreddit_names=reddit_config.get('subreddits', []),
-                    limit=reddit_config.get('limit', 10)
-                )
-            
-            # Fetch Twitter content
-            if 'twitter' in config:
-                twitter_config = config['twitter']
-                results['twitter'] = self.fetch_top_x_clips(
-                    hashtags=twitter_config.get('hashtags'),
-                    limit=twitter_config.get('limit', 10)
-                )
-            
-            # Fetch YouTube content
-            if 'youtube' in config:
-                youtube_config = config['youtube']
-                results['youtube'] = self.fetch_top_youtube_clips(
-                    search_terms=youtube_config.get('search_terms'),
-                    limit=youtube_config.get('limit', 10)
-                )
-            
-            logger.info("Successfully fetched highlights from all platforms")
-            
-        except Exception as e:
-            logger.error(f"Error fetching highlights: {str(e)}")
-            
-        return results
-
-# =============================================================================
-# UTILITY FUNCTIONS
-# =============================================================================
+        # Note: X/Twitter removed from automated fetching
+        logger.info("For X/Twitter content, use fetch_manual_x_clips() with specific tweet URLs")
+        
+        return highlights
 
 def validate_api_credentials() -> Dict[str, bool]:
     """
-    Validate that required API credentials are configured.
+    Global function to validate API credentials for automated platforms.
     
     Returns:
-        Dict[str, bool]: Dictionary showing which platforms have valid credentials
+        Dict[str, bool]: Status of each platform's API credentials
     """
-    credentials_status = {
-        'reddit': bool(REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET),
-        'twitter': bool(TWITTER_API_KEY and TWITTER_API_SECRET and 
-                      TWITTER_ACCESS_TOKEN and TWITTER_ACCESS_TOKEN_SECRET),
-        'youtube': bool(YOUTUBE_API_KEY)
-    }
-    
-    logger.info(f"API credentials status: {credentials_status}")
-    return credentials_status
+    fetcher = WeeklyHighlightsFetcher()
+    return fetcher.validate_api_credentials()
 
 def get_default_weekly_config() -> Dict[str, Any]:
     """
-    Get default configuration for weekly highlights fetching.
+    Get default configuration for automated weekly highlights (Reddit and YouTube only).
+    
+    Note: X/Twitter configuration removed as it now requires manual URL input.
     
     Returns:
-        Dict[str, Any]: Default configuration dictionary
+        Dict[str, Any]: Default configuration for automated platforms
     """
     return {
         'reddit': {
             'subreddits': ['funny', 'videos', 'nextfuckinglevel', 'oddlysatisfying'],
             'limit': 10
         },
-        'twitter': {
-            'hashtags': ['#viral', '#trending', '#funny'],
-            'limit': 10
-        },
         'youtube': {
             'search_terms': ['viral video', 'trending now', 'funny moments'],
             'limit': 10
         }
+        # Note: Twitter configuration removed - use fetch_manual_x_clips() instead
     }
 
 # =============================================================================
 # LEGACY FUNCTIONS (for backward compatibility)
 # =============================================================================
-
-# TODO: Implement original video downloading functionality for TikTok, Instagram, etc.
-# This can be integrated with the WeeklyHighlightsFetcher class or kept separate
 
 def download_video(url: str, output_path: str) -> bool:
     """
@@ -293,19 +248,25 @@ def download_video(url: str, output_path: str) -> bool:
 
 if __name__ == "__main__":
     # Example usage
-    print("Weekly Highlights Fetcher - Ready for API integration!")
+    print("Weekly Highlights Fetcher - Automated Reddit/YouTube, Manual X/Twitter!")
     
-    # Check API credentials
+    # Check API credentials for automated platforms
     credentials = validate_api_credentials()
-    print(f"API Status: {credentials}")
+    print(f"Automated API Status: {credentials}")
     
     # Initialize fetcher
     fetcher = WeeklyHighlightsFetcher()
     
-    # Get default config
+    # Get default config (automated platforms only)
     config = get_default_weekly_config()
-    print(f"Default config: {config}")
+    print(f"Automated platforms config: {config}")
     
-    # This would fetch highlights once APIs are implemented
+    # Example of manual X/Twitter usage
+    print("\nFor X/Twitter videos, use manual mode:")
+    print("tweet_urls = ['https://twitter.com/user/status/123', 'https://x.com/user/status/456']")
+    print("results = fetch_manual_x_clips(tweet_urls)")
+    print("print(f'X/Twitter results: {results}')")
+    
+    # This would fetch automated highlights once APIs are implemented
     # highlights = fetcher.fetch_all_highlights(config)
-    # print(f"Fetched highlights: {highlights}")
+    # print(f"Automated highlights: {highlights}")
