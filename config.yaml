@@ -1,0 +1,31 @@
+# TikTok Clip Automator Configuration
+# Configuration file for the TikTok clip automation tool
+
+# Application settings
+app:
+  name: "TikTok Clip Automator"
+  version: "1.0.0"
+  debug: false
+
+# Input/Output settings
+paths:
+  input_directory: "./inputs"
+  output_directory: "./outputs"
+  temp_directory: "./temp"
+
+# Video processing settings
+video:
+  max_duration: 60  # seconds
+  output_format: "mp4"
+  quality: "high"
+
+# API settings (placeholder)
+api:
+  rate_limit: 10  # requests per minute
+  timeout: 30     # seconds
+
+# Logging settings
+logging:
+  level: "INFO"
+  file: "app.log"
+  max_size: "10MB"
