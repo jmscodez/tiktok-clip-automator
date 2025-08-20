@@ -1,5 +1,4 @@
 name: Test Drive Upload
-
 # Triggers for the workflow
 on:
   # Allow manual trigger
@@ -10,7 +9,6 @@ on:
   # Run on pull requests to main  
   pull_request:
     branches: [ main ]
-
 jobs:
   test-drive-upload:
     runs-on: ubuntu-latest
@@ -31,7 +29,7 @@ jobs:
         
     - name: Create creds.json from secrets
       env:
-        GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+        GOOGLE_CREDENTIALS: ${{ secrets.GDRIVE_CREDS_JSON }}
       run: |
         echo "$GOOGLE_CREDENTIALS" > creds.json
         
