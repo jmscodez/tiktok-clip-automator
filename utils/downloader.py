@@ -15,6 +15,63 @@ import logging
 import subprocess
 from typing import List, Dict, Optional, Any
 from datetime import datetime, timedelta
+import tempfile
+import os
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
+
+def ensure_drive_subfolder(service, parent_id, subfolder_name):
+    query = f"'{parent_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and name = '{subfolder_name}' and trashed = false"
+    results = service.files().list(q=query, fields="files(id, name)").execute()
+    folders = results.get('files', [])
+    if folders:
+        return folders[0]['id']
+    # Create folder if missing
+    folder_metadata = {'name': subfolder_name,
+                       'mimeType': 'application/vnd.google-apps.folder',
+                       'parents': [parent_id]}
+    folder = service.files().create(body=folder_metadata, fields='id').execute()
+    return folder.get('id')
+
+def upload_to_drive_via_service_account(file_name, file_stream):
+    """
+    Uploads a video to the 'impulse/2.0/' folder in Google Drive using a service account,
+    then deletes any temp file after upload.
+
+    Args:
+      file_name:        Name for the uploaded file in Drive (str)
+      file_stream:      File-like object or stream (opened in 'rb' mode)
+
+    Returns:
+      The uploaded Google Drive file ID string upon success, else None.
+    """
+    SCOPES = ['https://www.googleapis.com/auth/drive']
+    SERVICE_ACCOUNT_FILE = 'creds.json'
+    IMPULSE_PARENT_ID = '1IjWmMJJKp3BMhVINrSbwkL1HIT5277WF'
+
+    credentials = service_account.Credentials.from_service_account_file(
+        SERVICE_ACCOUNT_FILE, scopes=SCOPES
+    )
+    service = build('drive', 'v3', credentials=credentials)
+
+    # Find or create '2.0' within 'impulse'
+    subfolder_id = ensure_drive_subfolder(service, IMPULSE_PARENT_ID, '2.0')
+
+    temp_path = ''
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file_name)[-1]) as tmp:
+            tmp.write(file_stream.read())
+            temp_path = tmp.name
+
+        file_metadata = {'name': file_name, 'parents': [subfolder_id]}
+        media = MediaFileUpload(temp_path, resumable=True)
+        uploaded = service.files().create(body=file_metadata, media_body=media, fields='id').execute()
+        print(f"Uploaded {file_name} to Google Drive (impulse/2.0) with ID {uploaded.get('id')}")
+        return uploaded.get('id')
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            os.remove(temp_path)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
